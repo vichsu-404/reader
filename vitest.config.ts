@@ -1,8 +1,11 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
-// src/core runs under Node: it needs node:sqlite for the test DB driver, and
-// jsdom ships no crypto.subtle, which every unit_id hash depends on.
+// Two projects because the environments genuinely differ:
+//   core — node:sqlite for the test DB driver, no DOM needed
+//   dom  — ingest needs DOMParser, renderer needs a document; both need a
+//          crypto.subtle shim, since jsdom ships none and every unit_id hash
+//          depends on it.
 export default defineConfig({
   test: {
     projects: [
@@ -10,16 +13,23 @@ export default defineConfig({
         test: {
           name: 'core',
           environment: 'node',
-          include: ['src/core/**/*.test.ts', 'src/main/**/*.test.ts'],
+          include: [
+            'src/core/db/**/*.test.ts',
+            'src/core/coach/**/*.test.ts',
+            'src/main/**/*.test.ts',
+          ],
         },
       },
       {
         plugins: [react()],
         test: {
-          name: 'renderer',
+          name: 'dom',
           environment: 'jsdom',
-          include: ['src/renderer/**/*.test.{ts,tsx}'],
-          setupFiles: ['src/renderer/test-setup.ts'],
+          include: [
+            'src/core/ingest/**/*.test.ts',
+            'src/renderer/**/*.test.{ts,tsx}',
+          ],
+          setupFiles: ['src/test-setup.ts'],
         },
       },
     ],
