@@ -206,3 +206,43 @@ that add columns we already know we need would be pure ceremony — and they com
 the phases that would otherwise just write code. Migration discipline (decision 006)
 begins the moment v1 lands on the user's machine: from then on, `0001` is frozen and
 every change is a new file.
+
+---
+
+## 013 — `book_id` is derived from metadata, not from the file
+
+**Context.** `book_id` is part of the `unit_id` preimage. The obvious
+implementations — a UUID minted at import, or a hash of the file bytes — both give a
+different `book_id` every time a book is re-imported.
+
+**Decision.** `book_id = sha256("bv1" + normalized lowercased title + author)[:16]`.
+
+**Consequences.** Re-importing the same work from a different EPUB lands on the same
+`book_id`, so unchanged paragraphs keep their `unit_id` and every note stays attached.
+Without this, decision 001 would be inert: *every* unit would look new on *every*
+re-import, and the re-match pass in decision 001 would be doing all the work with none
+of the guarantees.
+
+Cost: two genuinely different books with identical title and author collapse into one.
+For a personal library this is vanishingly unlikely, and the case it does cover —
+"the same book, a better-formatted edition" — is the one that matters.
+
+---
+
+## 014 — A re-match carries the old id as provenance, never as identity
+
+**Context.** When a paragraph is lightly edited, the re-match pass finds its
+predecessor. The tempting move is to give the new text the old `unit_id` so every note
+follows automatically.
+
+**Decision.** The new text keeps its own content hash. The predecessor's id is stored
+in `units.matched_from_unit_id`, and the predecessor row is retained.
+
+**Consequences.** The invariant in decision 001 holds without exception: a `unit_id`
+always identifies exactly the text that hashes to it. A note stays resolvable because
+its unit row is never deleted, and the provenance chain lets the UI show "this
+paragraph was edited" rather than pretending nothing changed.
+
+Cost: following a note to the current text is a lookup through
+`matched_from_unit_id` rather than a direct hit. That is a query, not a rewrite — and
+it is the price of never silently reattaching a note to words that are no longer there.

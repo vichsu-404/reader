@@ -41,11 +41,18 @@ calls `invoke()` directly — that is `src/main/`'s only job.
 A *unit* is one paragraph. Its identity is a content hash, not a position:
 
 ```
-unit_id = sha256(NORMALIZE_VERSION + book_id + chapter_index + normalized_text)[:16]
+unit_id  = sha256(NORMALIZE_VERSION + book_id + chapter_index + normalized_text)[:16]
+book_id  = sha256("bv1" + lowercased normalized title + author)[:16]
 ```
 
 Everything that points at text — progress, notes, vocab, chat messages — stores a
 `unit_id`. A `seq` column stores the ordinal for ordering and for the re-match window.
+
+**`book_id` is derived from metadata, not from the file.** This is load-bearing: since
+`book_id` is part of the `unit_id` preimage, a file-derived id (a hash of the bytes, or
+a fresh UUID per import) would change every `unit_id` on re-import and defeat the entire
+re-match design. Deriving it from title and author means the same work re-imported from
+a different EPUB lands on the same `book_id`, and unchanged paragraphs keep their hashes.
 
 This is what makes re-importing a book safe. If the reader replaces a Gutenberg EPUB
 with a better-formatted edition, paragraphs whose text is unchanged keep their hash, and
@@ -59,9 +66,17 @@ window and scores word-bag similarity:
 
 | Similarity | Action |
 | --- | --- |
-| > 0.9 | auto-accept: carry the old `unit_id` forward |
+| > 0.9 | auto-accept: record the old id as the new unit's `matched_from_unit_id` |
 | 0.6 – 0.9 | ask the reader in `ReimportReview` |
 | < 0.6 | treat as a new unit |
+
+Punctuation and case are stripped before scoring — curly-vs-straight quotes and
+en-vs-em dashes are exactly the edition differences this pass exists to absorb.
+
+A match **carries the anchor forward as provenance; it does not reuse the id.** The new
+text keeps its own hash and records `matched_from_unit_id`. Reusing the old `unit_id`
+for changed text would silently reattach a note to words that are no longer there —
+the precise failure the hashing scheme exists to prevent.
 
 Old units that nothing matched are flagged `is_orphaned = 1`. **Units are never
 deleted** — an orphaned unit still owns its notes, and a later re-import may revive it.
@@ -145,11 +160,29 @@ shipped it is frozen; changes are new files (DECISIONS 006, 012).
   determinism is what lets e2e assert on streamed output.
 - `providers/anthropic.ts` — the only file permitted to import `@anthropic-ai/sdk`.
   Split into a pure `buildAnthropicRequest()` (unit tested, no network) and a thin
-  streaming wrapper. Applies `cache_control: {type: 'ephemeral'}` to the system prompt
-  and book metadata blocks.
+  streaming wrapper.
 
-`index.ts` picks a provider: `mock` unless a keyring secret exists *and* the user has
-enabled the real provider in settings.
+`index.ts` picks a provider: `mock` unless a keyring secret exists *and* the reader has
+enabled the real provider in settings. The SDK is behind a dynamic import, so a
+mock-only session never loads it.
+
+### Anthropic request shape
+
+Written against the model's current API surface; each of these is a deliberate choice,
+not a default:
+
+| Choice | Why |
+| --- | --- |
+| `claude-opus-5` | current Opus tier; a constant at the top of the file |
+| `effort: 'low'` | turns are short and scoped, and the reader is waiting on the stream |
+| adaptive thinking (the model default) | disabling it on this model can leak internal tags into the visible reply |
+| no `temperature` / `top_p` / `top_k` | this model rejects them with a 400 |
+| `cache_control` on the system prompt only | book metadata sits *after* the breakpoint — it changes per chapter, so caching it would invalidate the entry on every chapter turn |
+| `fallbacks: 'default'` | safety classifiers can decline a request; this re-runs it on the recommended fallback rather than surfacing a refusal |
+
+The system prompt is close to the 512-token minimum cacheable prefix for this model. If
+it is trimmed further, the cache will silently stop being written — there is no error,
+only `cache_creation_input_tokens: 0`.
 
 ## Security model
 
@@ -168,14 +201,28 @@ enabled the real provider in settings.
 ## Testing
 
 **Unit — Vitest.** Two projects, because the environments genuinely differ:
-`src/core/**` runs in `node` (needs `node:sqlite`; jsdom has no `crypto.subtle`, which
-every hash depends on), `src/renderer/**` runs in `jsdom`.
 
-**E2E — Playwright.** Specs run against `npm run dev:web` and install
-`@tauri-apps/api/mocks` before navigation. A `sql.js` database answers `plugin:sql`
-calls for real; `plugin:fs`, `plugin:dialog`, and keyring are stubbed; the coach mock
-runs as ordinary TypeScript. Fixtures build a synthetic EPUB in memory with `jszip`
-rather than committing a binary.
+- **`core`** runs in `node`. The DB layer imports `node:sqlite`, which Vite refuses to
+  bundle into a client environment. Ingest lives here too, and borrows a `DOMParser`
+  from jsdom via `src/test-setup-node.ts` — cheaper than moving the database somewhere
+  it cannot go.
+- **`renderer`** runs in `jsdom` for React, with a `crypto.subtle` shim: jsdom ships
+  none, and every `unit_id` hash depends on it.
+
+The highest-value tests are in `src/core/ingest/reimport.test.ts`, which import a book,
+annotate it, re-import an edited copy, and assert the note is still attached to the
+right paragraph — the promise the whole hashing design exists to keep.
+
+**E2E — Playwright.** Specs run against `npm run dev:web`. The harness lives in
+`src/renderer/e2e-harness.ts` and is loaded only when `import.meta.env.DEV` *and* the
+page carries `?e2e=1`, so the whole branch — including `sql.js` — is eliminated from
+production builds. It installs the official `mockIPC`; a `sql.js` database answers
+`plugin:sql` calls for real, while `plugin:fs`, `plugin:dialog`, and keyring are
+stubbed. The coach mock runs as ordinary TypeScript. Fixtures build a synthetic EPUB in
+memory with `jszip` rather than committing a binary.
+
+On a machine with a pre-provisioned Chromium, point at it:
+`PLAYWRIGHT_CHROMIUM_PATH=/path/to/chromium npm run test:e2e`.
 
 > **These e2e tests do not drive the compiled native binary.** They exercise the
 > frontend in Chromium, not WKWebView, and not the Rust host or the real plugins.
@@ -189,7 +236,8 @@ The schema already carries what v2 and v3 need, so neither requires a migration 
 existing data:
 
 - **v2 persona editor** — CRUD over `coach_profiles`. v1 seeds one 中高級 / `zh-TW` row
-  and reads it as data; no persona text is hardcoded in UI logic.
+  and `context.ts` reads its `level` and `target_locale` into the prompt as data; no
+  persona text is hardcoded in UI logic.
 - **v2 full-text search** — add FTS5 virtual tables over `notes`, `vocab`, `messages`.
 - **v3 SRS review** — `vocab` already has `ease`, `interval_days`, `due_at`, and
   `review_count`.
