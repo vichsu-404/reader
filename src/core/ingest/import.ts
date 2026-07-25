@@ -4,13 +4,17 @@ import {
   insertBook,
   insertChapters,
   insertUnits,
+  listUnits,
+  markUnitsOrphaned,
 } from '../db/queries';
 import type { BookFormat, BookRow } from '../db/schema';
 import { parseEpub } from './epub';
 import { computeBookId } from './hash';
+import { NORMALIZE_VERSION } from './normalize';
+import { acceptCandidate, rematchUnits } from './rematch';
+import type { RematchCandidate } from './rematch';
 import { parseTxt } from './txt';
 import { assembleUnits } from './units';
-import { NORMALIZE_VERSION } from './normalize';
 
 /**
  * Takes bytes rather than a path so it stays free of IPC and testable under
@@ -28,11 +32,14 @@ export interface ImportResult {
   book: BookRow;
   unitCount: number;
   isReimport: boolean;
+  /** Medium-confidence re-match pairs awaiting the reader's decision. */
+  review: RematchCandidate[];
 }
 
 export async function importBook(
   db: DbDriver,
   input: ImportInput,
+  acceptedCandidates: readonly RematchCandidate[] = [],
 ): Promise<ImportResult> {
   const fallbackTitle = input.fileName
     .replace(/\.(epub|txt)$/i, '')
@@ -45,8 +52,16 @@ export async function importBook(
       : parseTxt(requireText(input), fallbackTitle);
 
   const bookId = await computeBookId(parsed.title, parsed.author);
-  const existing = await getBook(db, bookId);
+  const existingBook = await getBook(db, bookId);
   const { chapters, units } = await assembleUnits(bookId, parsed);
+
+  const existingUnits = existingBook ? await listUnits(db, bookId) : [];
+  const matched = rematchUnits(units, existingUnits);
+
+  let finalUnits = matched.units;
+  for (const candidate of acceptedCandidates) {
+    finalUnits = acceptCandidate(finalUnits, candidate);
+  }
 
   await insertBook(db, {
     id: bookId,
@@ -55,15 +70,23 @@ export async function importBook(
     format: input.format,
     sourcePath: input.sourcePath,
     normalizeVersion: NORMALIZE_VERSION,
-    unitCount: units.length,
+    unitCount: finalUnits.length,
   });
   await insertChapters(db, bookId, chapters);
-  await insertUnits(db, bookId, units);
+  await insertUnits(db, bookId, finalUnits);
+  // Never deleted: an orphaned unit still owns its notes, and a later
+  // re-import may revive it.
+  await markUnitsOrphaned(db, matched.orphanedUnitIds);
 
   const book = await getBook(db, bookId);
   if (!book) throw new Error('book insert did not round-trip');
 
-  return { book, unitCount: units.length, isReimport: existing !== null };
+  return {
+    book,
+    unitCount: finalUnits.length,
+    isReimport: existingBook !== null,
+    review: matched.review,
+  };
 }
 
 function requireBytes(input: ImportInput): Uint8Array {
