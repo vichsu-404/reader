@@ -5,8 +5,12 @@ import { ReimportReview } from './library/ReimportReview';
 import { useLibrary } from './library/useLibrary';
 import type { ImportOutcome } from './library/useLibrary';
 import { ReaderView } from './reader/ReaderView';
+import { ApiKeySettings } from './settings/ApiKeySettings';
 
-type View = { name: 'library' } | { name: 'reader'; bookId: string };
+type View =
+  | { name: 'library' }
+  | { name: 'reader'; bookId: string }
+  | { name: 'settings' };
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'library' });
@@ -42,7 +46,9 @@ export function App() {
 
   return (
     <main className="app-shell">
-      {view.name === 'library' ? (
+      {view.name === 'settings' ? (
+        <ApiKeySettings onClose={() => setView({ name: 'library' })} />
+      ) : view.name === 'library' ? (
         <Bookshelf
           books={books}
           status={status}
@@ -51,6 +57,7 @@ export function App() {
             void importFromDisk().then(openIfImported);
           }}
           onOpen={(bookId) => setView({ name: 'reader', bookId })}
+          onOpenSettings={() => setView({ name: 'settings' })}
         />
       ) : (
         <ReaderView

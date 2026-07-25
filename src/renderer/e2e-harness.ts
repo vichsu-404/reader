@@ -102,6 +102,14 @@ export async function installE2EHarness(): Promise<void> {
           new TextEncoder().encode(config.bookFileText ?? ''),
         );
 
+      // Keyring: no key under test, so the provider factory falls through to
+      // the mock — which is exactly what the specs assert against.
+      case 'get_api_key':
+        return null;
+      case 'set_api_key':
+      case 'delete_api_key':
+        return null;
+
       default:
         throw new Error(`unmocked Tauri command: ${command}`);
     }

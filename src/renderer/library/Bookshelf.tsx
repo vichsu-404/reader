@@ -7,6 +7,7 @@ interface BookshelfProps {
   error: string | null;
   onImport: () => void;
   onOpen: (bookId: string) => void;
+  onOpenSettings: () => void;
 }
 
 export function Bookshelf({
@@ -15,16 +16,26 @@ export function Bookshelf({
   error,
   onImport,
   onOpen,
+  onOpenSettings,
 }: BookshelfProps) {
   return (
     <section className="bookshelf">
       <header className="bookshelf-header">
         <h1>書架</h1>
-        <ImportDialog
-          onImport={onImport}
-          importing={status === 'importing'}
-          error={error}
-        />
+        <div className="import">
+          <ImportDialog
+            onImport={onImport}
+            importing={status === 'importing'}
+            error={error}
+          />
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            data-testid="open-settings"
+          >
+            設定
+          </button>
+        </div>
       </header>
 
       {status === 'loading' ? <p className="dim">載入中…</p> : null}

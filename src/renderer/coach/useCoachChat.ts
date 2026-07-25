@@ -17,6 +17,7 @@ import type {
   UnitRow,
 } from '../../core/db/schema';
 import { loadApiKey } from '../../main/keyring';
+import { isRealProviderEnabled } from '../settings/useCoachSettings';
 
 const HISTORY_LIMIT = 30;
 
@@ -64,7 +65,10 @@ export function useCoachChat(book: BookRow | null) {
       abortRef.current = controller;
 
       const db = await getDb();
-      providerRef.current ??= createCoachProvider(loadApiKey, false);
+      providerRef.current ??= createCoachProvider(
+        loadApiKey,
+        isRealProviderEnabled(),
+      );
       const provider = await providerRef.current;
 
       await insertMessage(db, {

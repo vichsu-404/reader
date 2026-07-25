@@ -383,3 +383,54 @@ blockquote.unit-text {
   font-size: 0.75rem;
   padding: 0.15rem 0.4rem;
 }
+
+/* ------------------------------------------------------------- settings -- */
+
+.settings,
+.reimport-review {
+  padding: 1.5rem 2rem;
+  overflow-y: auto;
+  max-width: 52rem;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.settings-body h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.settings-row input[type='password'] {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+}
+
+.review-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
