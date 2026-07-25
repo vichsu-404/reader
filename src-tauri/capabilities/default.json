@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Reader capabilities: local SQLite, a file picker, and read-only access to books under the user's home directory.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "sql:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "fs:default",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "$HOME/**" }]
+    }
+  ]
+}
