@@ -118,6 +118,8 @@ Rust in them, and they never call `invoke()` directly.
   `queries.ts` are genuinely exercised. This does **not** drive the compiled native
   binary — `tauri-driver` has no macOS support and CDP cannot attach to WKWebView.
   See `docs/ARCHITECTURE.md`.
+- On a machine with a pre-provisioned Chromium (rather than one Playwright
+  downloaded), point at it: `PLAYWRIGHT_CHROMIUM_PATH=/path/to/chromium npm run test:e2e`.
 
 ## Scope
 
