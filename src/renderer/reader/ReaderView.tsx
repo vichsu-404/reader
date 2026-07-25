@@ -1,10 +1,13 @@
 import { useCallback } from 'react';
 
-import { getDb } from '../../core/db/client';
-import { insertNote, insertVocab } from '../../core/db/queries';
-import type { UnitRow } from '../../core/db/schema';
+import type { MessageRow, UnitRow } from '../../core/db/schema';
+import { ChatPanel } from '../coach/ChatPanel';
+import { useCoachChat } from '../coach/useCoachChat';
+import { NotesPanel } from '../notes/NotesPanel';
+import { useNotesVocab } from '../notes/useNotesVocab';
 import { ReaderPanel } from './ReaderPanel';
 import { useBookUnits } from './useBookUnits';
+import { useResumePoint, useSaveProgress } from './useProgress';
 import { useReaderNavigation } from './useReaderNavigation';
 import { useReaderSelection } from './useReaderSelection';
 import type { ReaderSelection } from './useReaderSelection';
@@ -16,64 +19,141 @@ interface ReaderViewProps {
 
 export function ReaderView({ bookId, onBack }: ReaderViewProps) {
   const { book, units, loading } = useBookUnits(bookId);
-  const { currentUnitId, setCurrentUnitId } = useReaderNavigation(units, null);
-  const { selection, clear } = useReaderSelection(!loading);
+  const { resumeUnitId, loaded: progressLoaded } = useResumePoint(bookId);
 
-  const addVocab = useCallback(
-    (picked: ReaderSelection) => {
-      void (async () => {
-        const db = await getDb();
-        await insertVocab(db, {
-          term: picked.text,
-          glossZh: '',
-          reading: null,
-          exampleEn: null,
-          note: null,
-          bookId,
-          unitId: picked.unitId,
-          source: 'selection',
-          sourceMessageId: null,
-        });
-        clear();
-      })();
-    },
-    [bookId, clear],
+  // Units are withheld until the saved position is known, so navigation never
+  // settles on unit 0 and then jumps.
+  const { currentUnitId, currentUnit, setCurrentUnitId } = useReaderNavigation(
+    progressLoaded ? units : [],
+    resumeUnitId,
   );
 
-  const addNote = useCallback(
+  useSaveProgress(bookId, currentUnit, progressLoaded);
+
+  const { selection, clear } = useReaderSelection(!loading);
+  const { notes, vocab, addNote, addVocab, removeNote, removeVocab } =
+    useNotesVocab(bookId);
+  const { messages, streaming, error, explain, ask } = useCoachChat(book);
+
+  const addVocabFromSelection = useCallback(
     (picked: ReaderSelection) => {
-      void (async () => {
-        const db = await getDb();
-        await insertNote(db, {
-          bookId,
+      void addVocab(
+        {
           unitId: picked.unitId,
           selectedText: picked.text,
-          body: '',
-          source: 'selection',
           sourceMessageId: null,
-        });
-        clear();
-      })();
+          source: 'selection',
+        },
+        picked.text,
+        '',
+      );
+      clear();
     },
-    [bookId, clear],
+    [addVocab, clear],
   );
 
-  const explain = useCallback((unit: UnitRow) => {
-    setCurrentUnitId(unit.unit_id);
-  }, [setCurrentUnitId]);
+  const addNoteFromSelection = useCallback(
+    (picked: ReaderSelection) => {
+      void addNote(
+        {
+          unitId: picked.unitId,
+          selectedText: picked.text,
+          sourceMessageId: null,
+          source: 'selection',
+        },
+        picked.text,
+      );
+      clear();
+    },
+    [addNote, clear],
+  );
+
+  const saveCoachMessage = useCallback(
+    (message: MessageRow) => {
+      void addNote(
+        {
+          unitId: message.unit_id,
+          selectedText: null,
+          sourceMessageId: message.id,
+          source: 'chat',
+        },
+        message.content,
+      );
+    },
+    [addNote],
+  );
+
+  const addManualNote = useCallback(
+    (body: string) => {
+      void addNote(
+        {
+          unitId: null,
+          selectedText: null,
+          sourceMessageId: null,
+          source: 'manual',
+        },
+        body,
+      );
+    },
+    [addNote],
+  );
+
+  const addManualVocab = useCallback(
+    (term: string, glossZh: string) => {
+      void addVocab(
+        {
+          unitId: null,
+          selectedText: null,
+          sourceMessageId: null,
+          source: 'manual',
+        },
+        term,
+        glossZh,
+      );
+    },
+    [addVocab],
+  );
+
+  const onExplain = useCallback(
+    (unit: UnitRow) => {
+      setCurrentUnitId(unit.unit_id);
+      void explain(unit);
+    },
+    [explain, setCurrentUnitId],
+  );
 
   return (
-    <ReaderPanel
-      title={book?.title ?? '…'}
-      units={units}
-      loading={loading}
-      currentUnitId={currentUnitId}
-      onFocusUnit={setCurrentUnitId}
-      onExplain={explain}
-      selection={selection}
-      onAddVocab={addVocab}
-      onAddNote={addNote}
-      onBack={onBack}
-    />
+    <div className="reader-layout">
+      <ReaderPanel
+        title={book?.title ?? '…'}
+        units={units}
+        loading={loading}
+        currentUnitId={currentUnitId}
+        onFocusUnit={setCurrentUnitId}
+        onExplain={onExplain}
+        selection={selection}
+        onAddVocab={addVocabFromSelection}
+        onAddNote={addNoteFromSelection}
+        onBack={onBack}
+      />
+
+      <ChatPanel
+        messages={messages}
+        streaming={streaming}
+        error={error}
+        currentUnit={currentUnit}
+        onAsk={(unit, question) => void ask(unit, question)}
+        onSaveMessage={saveCoachMessage}
+      />
+
+      <NotesPanel
+        notes={notes}
+        vocab={vocab}
+        onAddNote={addManualNote}
+        onAddVocab={addManualVocab}
+        onRemoveNote={(id) => void removeNote(id)}
+        onRemoveVocab={(id) => void removeVocab(id)}
+      />
+    </div>
   );
 }
